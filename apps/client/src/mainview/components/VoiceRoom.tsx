@@ -29,10 +29,18 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
     useEffect(() => {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             console.error("navigator.mediaDevices is undefined.");
-            alert("Media devices are not allowed in this environment.");
+            alert("Media devices are not allowed in this environment.\n\nOn macOS: Re-build the app to apply the ATS fix.\nOn Windows: Check Settings → Privacy → Camera / Microphone and allow access for this app.");
             onDisconnect();
             return;
         }
+
+        // Windows: listen for permission-denied event dispatched by the main process wrapper
+        const handlePermissionDenied = (e: Event) => {
+            const msg = (e as CustomEvent).detail || "Permission denied";
+            alert(`Camera/Microphone access was blocked.\n\nOn Windows, go to:\nSettings → Privacy & Security → Camera / Microphone\nand make sure this app is allowed.\n\nError: ${msg}`);
+            onDisconnect();
+        };
+        window.addEventListener("media-permission-denied", handlePermissionDenied);
 
         navigator.mediaDevices.getUserMedia({ video: true, audio: true })
             .then(stream => {
@@ -49,6 +57,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
             });
 
         return () => {
+            window.removeEventListener("media-permission-denied", handlePermissionDenied);
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
             }

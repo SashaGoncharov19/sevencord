@@ -26,7 +26,11 @@ export default {
 			bundleCEF: false,
 		},
 		win: {
-			bundleCEF: false,
+			bundleCEF: true,          // Bundle Chromium Embedded Framework
+			defaultRenderer: "cef",   // Use CEF instead of WebView2 — handles getUserMedia like Chrome
 		},
+	},
+	scripts: {
+		postBuild: "./scripts/postBuild.ts",
 	},
 } satisfies ElectrobunConfig;

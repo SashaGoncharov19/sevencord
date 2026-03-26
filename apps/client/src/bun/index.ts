@@ -3,7 +3,6 @@ import { BrowserWindow, Updater } from "electrobun/bun";
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
 
-// Check if Vite dev server is running for HMR
 async function getMainViewUrl(): Promise<string> {
 	const channel = await Updater.localInfo.channel();
 	if (channel === "dev") {
@@ -20,18 +19,21 @@ async function getMainViewUrl(): Promise<string> {
 	return "views://mainview/index.html";
 }
 
-// Create the main application window
 const url = await getMainViewUrl();
 
-const mainWindow = new BrowserWindow({
-	title: "React + Tailwind + Vite",
+new BrowserWindow({
+	title: "SevenCord",
 	url,
 	frame: {
-		width: 900,
-		height: 700,
+		width: 1200,
+		height: 800,
 		x: 200,
 		y: 200,
 	},
+	// On Windows, use CEF (Chromium Embedded Framework) instead of native
+	// WebView2. CEF handles camera/microphone permission prompts like Chrome,
+	// and treats views:// as a secure context for getUserMedia.
+	renderer: process.platform === "win32" ? "cef" : "native",
 });
 
-console.log("React Tailwind Vite app started!");
+console.log("7cord started!");
