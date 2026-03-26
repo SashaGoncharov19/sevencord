@@ -31,7 +31,7 @@ jobs:
         working-directory: apps/client
 
       - name: Build Electrobun (macOS arm64)
-        run: bunx electrobun build --env=canary --targets=macos-arm64
+        run: bunx electrobun build --env=stable --targets=macos-arm64
         working-directory: apps/client
 
       - name: List build output
@@ -71,7 +71,7 @@ jobs:
         working-directory: apps/client
 
       - name: Build Electrobun (Windows x64)
-        run: bunx electrobun build --env=canary --targets=win-x64
+        run: bunx electrobun build --env=stable --targets=win-x64
         working-directory: apps/client
 
       - name: List build output
@@ -112,10 +112,11 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          generate_release_notes: true
           tag_name: ${{ github.ref_name }}
-          name: "7cord ${{ github.ref_name }}"
+          name: "SevenCord ${{ github.ref_name }}"
           body: |
-            ## 7cord ${{ github.ref_name }}
+            ## SevenCord ${{ github.ref_name }}
 
             ### Downloads
             - **macOS (Apple Silicon)**: Download the `.dmg` file

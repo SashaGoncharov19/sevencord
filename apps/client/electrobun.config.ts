@@ -30,6 +30,9 @@ export default {
 			defaultRenderer: "cef",   // Use CEF instead of WebView2 — handles getUserMedia like Chrome
 		},
 	},
+	release: {
+		baseUrl: "https://github.com/SashaGoncharov19/sevencord/releases/latest/download"
+	},
 	scripts: {
 		postBuild: "./scripts/postBuild.ts",
 	},
