@@ -47,8 +47,9 @@ function App() {
 		setAppState("CONNECT_URL");
 	};
 
-	// Hash-based routing for splash screen components
-	if (window.location.hash === "#updater") {
+	// Query-based or Hash-based routing for splash screen components
+	const urlParams = new URLSearchParams(window.location.search);
+	if (urlParams.get("screen") === "updater" || window.location.hash.includes("updater")) {
 		return <UpdaterScreen />;
 	}
 

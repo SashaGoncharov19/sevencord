@@ -46,6 +46,7 @@ jobs:
             apps/client/artifacts/**/*.zip
             apps/client/artifacts/**/*.json
             apps/client/artifacts/**/*.patch
+            apps/client/artifacts/**/*.tar.zst
           if-no-files-found: error
 
   build-windows:
@@ -88,6 +89,7 @@ jobs:
             apps/client/artifacts/**/*.zip
             apps/client/artifacts/**/*.json
             apps/client/artifacts/**/*.patch
+            apps/client/artifacts/**/*.tar.zst
           if-no-files-found: error
 
   release:

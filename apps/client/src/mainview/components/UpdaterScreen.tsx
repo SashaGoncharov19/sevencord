@@ -6,7 +6,7 @@ const rpc = Electroview.defineRPC<UpdaterRPC>({
     handlers: {
         requests: {},
         messages: {
-            updateProgress: ({ progress }) => {
+            updateProgress: ({ progress }: { progress: number }) => {
                 // We'll update a global variable or custom event since this handler runs outside the component lifecycle
                 window.dispatchEvent(new CustomEvent("updater-progress", { detail: progress }));
             }

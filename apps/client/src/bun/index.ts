@@ -85,7 +85,7 @@ function startUpdaterWindow() {
 
 	const updaterWindow = new BrowserWindow({
 		title: "SevenCord Updater",
-		url: `${url}#updater`,
+		url: `${url}${url.includes('?') ? '&' : '?'}screen=updater`,
 		frame: { width: 400, height: 300, x: 400, y: 300 },
 		rpc,
 		renderer: process.platform === "win32" ? "cef" : "native",
