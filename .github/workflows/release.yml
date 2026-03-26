@@ -35,15 +35,15 @@ jobs:
         working-directory: apps/client
 
       - name: List build output
-        run: find apps/client/build -type f | head -30
+        run: find apps/client/artifacts -type f | head -30
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: 7cord-macos-arm64
           path: |
-            apps/client/build/**/*.dmg
-            apps/client/build/**/*.zip
+            apps/client/artifacts/**/*.dmg
+            apps/client/artifacts/**/*.zip
           if-no-files-found: error
 
   build-windows:
@@ -75,15 +75,15 @@ jobs:
         working-directory: apps/client
 
       - name: List build output
-        run: Get-ChildItem -Recurse apps/client/build | Select-Object FullName
+        run: Get-ChildItem -Recurse apps/client/artifacts | Select-Object FullName
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: 7cord-windows-x64
           path: |
-            apps/client/build/**/*.exe
-            apps/client/build/**/*.zip
+            apps/client/artifacts/**/*.exe
+            apps/client/artifacts/**/*.zip
           if-no-files-found: error
 
   release:
