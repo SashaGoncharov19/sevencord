@@ -255,7 +255,12 @@ const wsRoutes = new Elysia()
 
 // Main App instance
 const app = new Elysia()
-  .use(cors())
+  .use(cors({
+    origin: true,          // reflects any Origin header — allows desktop app requests
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  }))
   .use(authRoutes)
   .use(wsRoutes)
   .get("/ping", () => ({ status: "ok" }))

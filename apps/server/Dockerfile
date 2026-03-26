@@ -1,4 +1,4 @@
-FROM oven/bun:1 as base
+FROM oven/bun:1 AS base
 WORKDIR /usr/src/app
 
 FROM base AS install
@@ -19,7 +19,11 @@ FROM base AS release
 COPY --from=install /temp/prod/node_modules node_modules
 COPY --from=prerelease /usr/src/app/src src
 COPY --from=prerelease /usr/src/app/package.json .
+COPY --from=prerelease /usr/src/app/drizzle.config.ts .
+COPY --from=prerelease /usr/src/app/entrypoint.sh .
+
+RUN chmod +x entrypoint.sh
 
 USER bun
 EXPOSE 3000/tcp
-ENTRYPOINT [ "bun", "run", "src/index.ts" ]
+ENTRYPOINT ["sh", "entrypoint.sh"]
