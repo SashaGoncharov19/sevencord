@@ -8,7 +8,7 @@ on:
 jobs:
   build-macos:
     name: Build macOS (arm64)
-    runs-on: macos-14  # Apple Silicon runner
+    runs-on: macos-14
 
     steps:
       - name: Checkout repo
@@ -21,26 +21,30 @@ jobs:
 
       - name: Install root dependencies
         run: bun install
-        working-directory: .
 
       - name: Install client dependencies
         run: bun install
         working-directory: apps/client
 
-      - name: Build Vite (React)
-        run: bun run hmr & bun run build:canary
+      - name: Build Vite
+        run: bunx vite build
         working-directory: apps/client
 
-      - name: Build Electrobun (macOS)
+      - name: Build Electrobun (macOS arm64)
         run: bunx electrobun build --env=canary --targets=macos-arm64
         working-directory: apps/client
+
+      - name: List build output
+        run: find apps/client/build -type f | head -30
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: 7cord-macos-arm64
-          path: apps/client/build/**/*.dmg
-          if-no-files-found: warn
+          path: |
+            apps/client/build/**/*.dmg
+            apps/client/build/**/*.zip
+          if-no-files-found: error
 
   build-windows:
     name: Build Windows (x64)
@@ -62,20 +66,25 @@ jobs:
         run: bun install
         working-directory: apps/client
 
-      - name: Build Vite (React)
-        run: bun run vite build
+      - name: Build Vite
+        run: bunx vite build
         working-directory: apps/client
 
-      - name: Build Electrobun (Windows)
+      - name: Build Electrobun (Windows x64)
         run: bunx electrobun build --env=canary --targets=win-x64
         working-directory: apps/client
+
+      - name: List build output
+        run: Get-ChildItem -Recurse apps/client/build | Select-Object FullName
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: 7cord-windows-x64
-          path: apps/client/build/**/*.exe
-          if-no-files-found: warn
+          path: |
+            apps/client/build/**/*.exe
+            apps/client/build/**/*.zip
+          if-no-files-found: error
 
   release:
     name: Create GitHub Release
@@ -97,6 +106,9 @@ jobs:
           name: 7cord-windows-x64
           path: dist/windows
 
+      - name: List all release files
+        run: find dist -type f
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -109,11 +121,10 @@ jobs:
             - **macOS (Apple Silicon)**: Download the `.dmg` file
             - **Windows (x64)**: Download the `.exe` installer
 
-            ### Server Setup
-            Clone the repo and run:
+            ### Self-host your own server
             ```bash
             git clone https://github.com/${{ github.repository }}
-            cd <repo>/apps/server
+            cd sevencord/apps/server
             docker compose up -d
             ```
           files: |
