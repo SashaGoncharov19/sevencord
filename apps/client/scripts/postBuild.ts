@@ -11,6 +11,12 @@ import { join } from "path";
 const buildDir = process.env.ELECTROBUN_BUILD_DIR;
 const appName = process.env.ELECTROBUN_APP_NAME ?? "7cord";
 
+// PlistBuddy is macOS-only — skip ATS patching on other platforms
+if (process.platform !== "darwin") {
+  console.log("[postBuild] Non-macOS platform detected, skipping ATS patch.");
+  process.exit(0);
+}
+
 if (!buildDir) {
   console.log("ELECTROBUN_BUILD_DIR not set — skipping ATS patch");
   process.exit(0);
