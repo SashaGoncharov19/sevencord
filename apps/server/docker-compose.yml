@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-webchat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-webchat_password}
+      POSTGRES_DB: ${POSTGRES_DB:-webchat_db}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-webchat}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  server:
+    image: ghcr.io/sashagoncharov19/7cord-server:latest
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-webchat}:${POSTGRES_PASSWORD:-webchat_password}@db:5432/${POSTGRES_DB:-webchat_db}
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

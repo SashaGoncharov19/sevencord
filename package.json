@@ -1,0 +1,12 @@
+{
+  "name": "webchat",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:server": "bun run --cwd apps/server dev",
+    "dev:client": "bun run --cwd apps/client dev:hmr"
+  }
+}

@@ -1,0 +1,123 @@
+name: Build & Release Client
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-macos:
+    name: Build macOS (arm64)
+    runs-on: macos-14  # Apple Silicon runner
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install root dependencies
+        run: bun install
+        working-directory: .
+
+      - name: Install client dependencies
+        run: bun install
+        working-directory: apps/client
+
+      - name: Build Vite (React)
+        run: bun run hmr & bun run build:canary
+        working-directory: apps/client
+
+      - name: Build Electrobun (macOS)
+        run: bunx electrobun build --env=canary --targets=macos-arm64
+        working-directory: apps/client
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7cord-macos-arm64
+          path: apps/client/build/**/*.dmg
+          if-no-files-found: warn
+
+  build-windows:
+    name: Build Windows (x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install root dependencies
+        run: bun install
+
+      - name: Install client dependencies
+        run: bun install
+        working-directory: apps/client
+
+      - name: Build Vite (React)
+        run: bun run vite build
+        working-directory: apps/client
+
+      - name: Build Electrobun (Windows)
+        run: bunx electrobun build --env=canary --targets=win-x64
+        working-directory: apps/client
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7cord-windows-x64
+          path: apps/client/build/**/*.exe
+          if-no-files-found: warn
+
+  release:
+    name: Create GitHub Release
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: 7cord-macos-arm64
+          path: dist/macos
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: 7cord-windows-x64
+          path: dist/windows
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "7cord ${{ github.ref_name }}"
+          body: |
+            ## 7cord ${{ github.ref_name }}
+
+            ### Downloads
+            - **macOS (Apple Silicon)**: Download the `.dmg` file
+            - **Windows (x64)**: Download the `.exe` installer
+
+            ### Server Setup
+            Clone the repo and run:
+            ```bash
+            git clone https://github.com/${{ github.repository }}
+            cd <repo>/apps/server
+            docker compose up -d
+            ```
+          files: |
+            dist/macos/**
+            dist/windows/**
+          draft: false
+          prerelease: false
