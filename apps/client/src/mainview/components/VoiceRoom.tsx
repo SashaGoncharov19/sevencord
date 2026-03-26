@@ -97,6 +97,8 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
     };
 
     useEffect(() => {
+        let isMounted = true;
+
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             console.error("navigator.mediaDevices is undefined.");
             alert("Media devices are not allowed in this environment.");
@@ -152,6 +154,10 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                 return navigator.mediaDevices.getUserMedia({ video: false, audio: audioConstraints });
             })
             .then(stream => {
+                if (!isMounted) {
+                    stream.getTracks().forEach(track => track.stop());
+                    return;
+                }
                 playSelfJoin();
                 localStreamRef.current = stream;
                 setLocalStream(stream);
@@ -160,14 +166,16 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                 onSendSignal("MEDIA_STATE_CHANGED", { isVideoOff, isMuted }, undefined);
             })
             .catch(e => {
+                if (!isMounted) return;
                 console.error("Error accessing media devices", e);
                 alert("Cannot access microphone/camera. Please ensure your device has a working microphone and permissions are granted.");
                 onDisconnect();
             });
 
         return () => {
-            playSelfLeave();
+            isMounted = false;
             if (localStreamRef.current) {
+                playSelfLeave();
                 localStreamRef.current.getTracks().forEach(track => track.stop());
                 localStreamRef.current = null;
             }
@@ -192,6 +200,14 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
             onSendSignal("MEDIA_STATE_CHANGED", { isVideoOff, isMuted }, undefined);
         }
     }, [isMuted, isVideoOff, localStream, onSendSignal]);
+
+    const mungeSDP = (sdp?: string) => {
+        if (!sdp) return sdp;
+        return sdp.replace(/(a=fmtp:\d+ .*)/g, (match) => {
+            if (match.includes("apt=")) return match; // Skip RTX/dummy payloads
+            return match + ";stereo=1;sprop-stereo=1;maxaveragebitrate=510000;cbr=1";
+        });
+    };
 
     const getOrCreatePeerConnection = (targetId: string, isInitiator: boolean) => {
         if (peerConnections.current.has(targetId)) {
@@ -239,7 +255,10 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
 
         if (isInitiator) {
             pc.createOffer()
-                .then(offer => pc.setLocalDescription(offer))
+                .then(offer => {
+                    offer.sdp = mungeSDP(offer.sdp);
+                    return pc.setLocalDescription(offer);
+                })
                 .then(() => {
                     onSendSignal("WEBRTC_OFFER", pc.localDescription, targetId);
                 })
@@ -302,6 +321,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                     const pc = getOrCreatePeerConnection(senderId, false);
                     await pc.setRemoteDescription(new RTCSessionDescription(content));
                     const answer = await pc.createAnswer();
+                    answer.sdp = mungeSDP(answer.sdp);
                     await pc.setLocalDescription(answer);
                     onSendSignal("WEBRTC_ANSWER", pc.localDescription, senderId);
                 } else if (type === "WEBRTC_ANSWER" && targetId === currentUserId) {

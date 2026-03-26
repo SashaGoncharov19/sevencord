@@ -126,6 +126,14 @@ export default function ChatLayout({ serverUrl, token, onDisconnect }: ChatLayou
 		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
 	}, [messages]);
 
+	// Fix the reconnection bug: Clear the WebRTC signal backlog when disconnecting from a call!
+	// Without this, remounting the VoiceRoom processes ALL historical peer offers, immediately crashing the connection.
+	useEffect(() => {
+		if (!voiceChannel) {
+			setIncomingSignals([]);
+		}
+	}, [voiceChannel]);
+
 	const loadDevices = async () => {
 		if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
 			try {
