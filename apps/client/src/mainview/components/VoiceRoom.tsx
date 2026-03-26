@@ -81,6 +81,7 @@ function RemoteVideo({
 
 export default function VoiceRoom({ channelId, currentUserId, onSendSignal, incomingSignals, onDisconnect, isMuted, isVideoOff, onToggleMute, onToggleVideo, isVisible, audioDeviceId, videoDeviceId, videoQuality, noiseSuppression, echoCancellation }: VoiceRoomProps) {
     const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+    const localStreamRef = useRef<MediaStream | null>(null);
     const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
     const [roomUsers, setRoomUsers] = useState<Record<string, RoomUser>>({});
     const [pinnedUserId, setPinnedUserId] = useState<string | null>(null);
@@ -103,11 +104,27 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
             return;
         }
 
-        let audioConstraints: any = {
-            echoCancellation: echoCancellation ?? true,
-            noiseSuppression: noiseSuppression ?? true,
-            autoGainControl: true
-        };
+        const shouldEnableNS = noiseSuppression ?? true;
+        const shouldEnableEC = echoCancellation ?? true;
+
+        let audioConstraints: any;
+        if (shouldEnableNS || shouldEnableEC) {
+            audioConstraints = {
+                echoCancellation: shouldEnableEC,
+                noiseSuppression: shouldEnableNS,
+                autoGainControl: true
+                // Note: Enforcing sampleRate or channelCount here disables Chromium's native AEC/NS!
+            };
+        } else {
+            // "Studio Mode": Bypass all browser processing for raw stereo quality
+            audioConstraints = {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+                sampleRate: 48000,
+                channelCount: 2
+            };
+        }
         
         if (audioDeviceId && audioDeviceId !== "default") {
             audioConstraints.deviceId = { exact: audioDeviceId };
@@ -136,6 +153,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
             })
             .then(stream => {
                 playSelfJoin();
+                localStreamRef.current = stream;
                 setLocalStream(stream);
                 onSendSignal("JOIN_VOICE", { peerId: currentUserId }, undefined);
                 // Immediately broadcast our media state
@@ -149,8 +167,9 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
 
         return () => {
             playSelfLeave();
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
+            if (localStreamRef.current) {
+                localStreamRef.current.getTracks().forEach(track => track.stop());
+                localStreamRef.current = null;
             }
             onSendSignal("LEAVE_VOICE", {}, undefined);
             for (const pc of peerConnections.current.values()) {
