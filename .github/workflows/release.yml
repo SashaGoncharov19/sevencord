@@ -44,6 +44,8 @@ jobs:
           path: |
             apps/client/artifacts/**/*.dmg
             apps/client/artifacts/**/*.zip
+            apps/client/artifacts/**/*.json
+            apps/client/artifacts/**/*.patch
           if-no-files-found: error
 
   build-windows:
@@ -84,6 +86,8 @@ jobs:
           path: |
             apps/client/artifacts/**/*.exe
             apps/client/artifacts/**/*.zip
+            apps/client/artifacts/**/*.json
+            apps/client/artifacts/**/*.patch
           if-no-files-found: error
 
   release:

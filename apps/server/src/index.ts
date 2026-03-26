@@ -20,6 +20,7 @@ interface ChatMessage {
 
 const activeUsers = new Map<string, User>();
 const wsToUserId = new Map<string, string>();
+const voiceRooms = new Map<string, Set<string>>(); // channelId -> Set of ws.id
 
 // Setup shared JWT plugin
 const setup = new Elysia({ name: "setup" }).use(
@@ -145,6 +146,13 @@ const wsRoutes = new Elysia()
           timestamp: row.timestamp.getTime()
         }));
 
+        const globalVoiceState: Record<string, User[]> = {};
+        for (const [vChannelId, participants] of voiceRooms.entries()) {
+             globalVoiceState[vChannelId] = Array.from(participants)
+                 .map(wsId => activeUsers.get(wsId))
+                 .filter(Boolean) as User[];
+        }
+
         ws.send({
           type: "WELCOME",
           content: {
@@ -152,6 +160,7 @@ const wsRoutes = new Elysia()
             username,
             history,
             users: Array.from(activeUsers.values()),
+            voiceRooms: globalVoiceState
           }
         });
 
@@ -203,13 +212,33 @@ const wsRoutes = new Elysia()
         });
       } else if (rawMessage.type === "JOIN_VOICE") {
         const channelId = rawMessage.channelId || 'lobby';
-        // Broadcast that user joined voice
+        
+        if (!voiceRooms.has(channelId)) {
+          voiceRooms.set(channelId, new Set());
+        }
+        voiceRooms.get(channelId)!.add(ws.id);
+        ws.subscribe("voice:" + channelId);
+        
+        const currentUsersInVoice = Array.from(voiceRooms.get(channelId) || [])
+            .map(socketId => activeUsers.get(socketId))
+            .filter(Boolean) as User[];
+
+        ws.send({
+          type: "VOICE_ROOM_STATE",
+          content: { channelId, users: currentUsersInVoice }
+        });
+
         ws.publish("chat", {
           type: "USER_JOINED_VOICE",
           content: { id, username: activeUsers.get(ws.id)?.username, channelId }
         });
       } else if (rawMessage.type === "LEAVE_VOICE") {
         const channelId = rawMessage.channelId || 'lobby';
+        if (voiceRooms.has(channelId)) {
+          voiceRooms.get(channelId)!.delete(ws.id);
+        }
+        ws.unsubscribe("voice:" + channelId);
+
         ws.publish("chat", {
           type: "USER_LEFT_VOICE",
           content: { id, channelId }
@@ -225,6 +254,13 @@ const wsRoutes = new Elysia()
           senderId: id,
           targetId: targetId
         });
+      } else if (rawMessage.type === "MEDIA_STATE_CHANGED") {
+          // Broadcast media toggle (video/mic) state so other users know to show avatar or video
+          ws.publish("chat", {
+              type: "MEDIA_STATE_CHANGED",
+              content: rawMessage.content,
+              senderId: id
+          });
       }
     },
     close(ws: any) {
@@ -235,6 +271,17 @@ const wsRoutes = new Elysia()
       activeUsers.delete(ws.id);
       wsToUserId.delete(ws.id);
       
+      // Remove from any voice rooms
+      for (const [channelId, participants] of voiceRooms.entries()) {
+        if (participants.has(ws.id)) {
+           participants.delete(ws.id);
+           ws.publish("chat", {
+             type: "USER_LEFT_VOICE",
+             content: { id, channelId }
+           });
+        }
+      }
+
       // Calculate remaining connections for this user to decide whether to broadcast USER_LEFT
       let hasOtherConnections = false;
       for (const [socketId, userId] of wsToUserId.entries()) {

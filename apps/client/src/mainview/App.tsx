@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import ConnectionScreen from "./components/ConnectionScreen";
 import LoginScreen from "./components/LoginScreen";
 import ChatLayout from "./components/ChatLayout";
+import UpdaterScreen from "./components/UpdaterScreen";
 
 type AppState = "CONNECT_URL" | "CHECKING_URL" | "LOGIN" | "CHAT";
 
@@ -45,6 +46,11 @@ function App() {
 		setServerUrl("");
 		setAppState("CONNECT_URL");
 	};
+
+	// Hash-based routing for splash screen components
+	if (window.location.hash === "#updater") {
+		return <UpdaterScreen />;
+	}
 
 	if (appState === "CONNECT_URL" || appState === "CHECKING_URL") {
 		return (

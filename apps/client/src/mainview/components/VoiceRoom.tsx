@@ -8,14 +8,79 @@ interface VoiceRoomProps {
     onDisconnect: () => void;
     isMuted: boolean;
     isVideoOff: boolean;
+    onToggleMute: () => void;
+    onToggleVideo: () => void;
     isVisible: boolean;
+    audioDeviceId?: string;
+    videoDeviceId?: string;
 }
 
-export default function VoiceRoom({ channelId, currentUserId, onSendSignal, incomingSignals, onDisconnect, isMuted, isVideoOff, isVisible }: VoiceRoomProps) {
-    const localVideoRef = useRef<HTMLVideoElement>(null);
-    const remoteVideosRef = useRef<HTMLDivElement>(null);
-    
+interface RoomUser {
+    username: string;
+    isVideoOff: boolean;
+    isMuted: boolean;
+}
+
+function RemoteVideo({ 
+    stream, 
+    username, 
+    isVideoOff, 
+    isMuted, 
+    isPinned, 
+    isLocal, 
+    onClick 
+}: { 
+    stream: MediaStream | null; username: string; isVideoOff: boolean; isMuted: boolean; isPinned: boolean; isLocal: boolean; onClick: () => void 
+}) {
+    const videoRef = useRef<HTMLVideoElement>(null);
+
+    useEffect(() => {
+        if (videoRef.current && stream) {
+            videoRef.current.srcObject = stream;
+        }
+    }, [stream]);
+
+    return (
+        <div 
+            onClick={onClick} 
+            className={`relative rounded-xl overflow-hidden bg-gray-900 shadow-md border border-gray-700 cursor-pointer group transition-all w-full h-full flex items-center justify-center ${isPinned ? '' : 'aspect-video'}`}
+        >
+            <video 
+                ref={videoRef} 
+                autoPlay 
+                muted={isLocal} 
+                playsInline 
+                className={`w-full h-full object-cover transition-opacity ${isLocal ? 'mirror transform scale-x-[-1]' : ''} ${isVideoOff ? 'opacity-0' : 'opacity-100'}`} 
+            />
+            {isVideoOff && (
+                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-800">
+                      <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`} className={`${isPinned ? 'w-32 h-32' : 'w-16 h-16'} rounded-full shadow-lg bg-indigo-500 mb-2 transition-all`} alt={username} />
+                 </div>
+            )}
+            <div className="absolute bottom-3 left-3 bg-gray-900/80 text-white px-2 py-1 rounded text-xs font-semibold backdrop-blur-sm shadow flex items-center gap-2 max-w-[80%]">
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isMuted ? 'bg-red-500' : 'bg-green-400 animate-pulse'}`}></div>
+                <span className="truncate">{username} {isLocal && '(You)'}</span>
+            </div>
+            {!isPinned && (
+                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 bg-black/50 p-1.5 rounded-lg text-white backdrop-blur transition-opacity">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l5-5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                </div>
+            )}
+            {isPinned && (
+                <div className="absolute top-4 right-4 bg-black/50 p-2 rounded-lg text-white backdrop-blur cursor-pointer hover:bg-black/70 transition-colors" title="Unpin">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                </div>
+            )}
+        </div>
+    );
+}
+
+export default function VoiceRoom({ channelId, currentUserId, onSendSignal, incomingSignals, onDisconnect, isMuted, isVideoOff, onToggleMute, onToggleVideo, isVisible, audioDeviceId, videoDeviceId }: VoiceRoomProps) {
     const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+    const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+    const [roomUsers, setRoomUsers] = useState<Record<string, RoomUser>>({});
+    const [pinnedUserId, setPinnedUserId] = useState<string | null>(null);
+    
     const peerConnections = useRef<Map<string, RTCPeerConnection>>(new Map());
     const processedSignals = useRef<Set<string>>(new Set());
 
@@ -29,35 +94,32 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
     useEffect(() => {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             console.error("navigator.mediaDevices is undefined.");
-            alert("Media devices are not allowed in this environment.\n\nOn macOS: Re-build the app to apply the ATS fix.\nOn Windows: Check Settings → Privacy → Camera / Microphone and allow access for this app.");
+            alert("Media devices are not allowed in this environment.");
             onDisconnect();
             return;
         }
 
-        // Windows: listen for permission-denied event dispatched by the main process wrapper
-        const handlePermissionDenied = (e: Event) => {
-            const msg = (e as CustomEvent).detail || "Permission denied";
-            alert(`Camera/Microphone access was blocked.\n\nOn Windows, go to:\nSettings → Privacy & Security → Camera / Microphone\nand make sure this app is allowed.\n\nError: ${msg}`);
-            onDisconnect();
-        };
-        window.addEventListener("media-permission-denied", handlePermissionDenied);
+        const audioConstraints = audioDeviceId && audioDeviceId !== "default" ? { deviceId: { exact: audioDeviceId } } : true;
+        const videoConstraints = videoDeviceId && videoDeviceId !== "default" ? { deviceId: { exact: videoDeviceId } } : true;
 
-        navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: audioConstraints })
+            .catch(e => {
+                console.warn("[VoiceRoom] Both video/audio failed, attempting audio-only fallback...", e);
+                return navigator.mediaDevices.getUserMedia({ video: false, audio: audioConstraints });
+            })
             .then(stream => {
                 setLocalStream(stream);
-                if (localVideoRef.current) {
-                    localVideoRef.current.srcObject = stream;
-                }
                 onSendSignal("JOIN_VOICE", { peerId: currentUserId }, undefined);
+                // Immediately broadcast our media state
+                onSendSignal("MEDIA_STATE_CHANGED", { isVideoOff, isMuted }, undefined);
             })
             .catch(e => {
                 console.error("Error accessing media devices", e);
-                alert("Cannot access microphone/camera. Please grant permissions.");
+                alert("Cannot access microphone/camera. Please ensure your device has a working microphone and permissions are granted.");
                 onDisconnect();
             });
 
         return () => {
-            window.removeEventListener("media-permission-denied", handlePermissionDenied);
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
             }
@@ -70,7 +132,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [channelId]);
 
-    // Handle Mute / Video Toggle
+    // Handle Mute / Video Toggle Locally and Broadcast
     useEffect(() => {
         if (localStream) {
             localStream.getAudioTracks().forEach(track => {
@@ -79,8 +141,9 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
             localStream.getVideoTracks().forEach(track => {
                 track.enabled = !isVideoOff;
             });
+            onSendSignal("MEDIA_STATE_CHANGED", { isVideoOff, isMuted }, undefined);
         }
-    }, [isMuted, isVideoOff, localStream]);
+    }, [isMuted, isVideoOff, localStream, onSendSignal]);
 
     const getOrCreatePeerConnection = (targetId: string, isInitiator: boolean) => {
         if (peerConnections.current.has(targetId)) {
@@ -103,34 +166,16 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
         };
 
         pc.ontrack = (event) => {
-            let remoteMedia = document.getElementById(`remote-video-${targetId}`) as HTMLVideoElement;
-            if (!remoteMedia) {
-                remoteMedia = document.createElement("video");
-                remoteMedia.id = `remote-video-${targetId}`;
-                remoteMedia.autoplay = true;
-                remoteMedia.playsInline = true;
-                remoteMedia.className = "w-full h-full object-cover rounded-xl bg-gray-900 border border-gray-700 shadow-md aspect-video";
-                if (remoteVideosRef.current) {
-                    const wrapper = document.createElement("div");
-                    wrapper.className = "relative rounded-xl overflow-hidden";
-                    wrapper.id = `wrapper-${targetId}`;
-                    
-                    const label = document.createElement("div");
-                    label.className = "absolute bottom-3 left-3 bg-gray-900/80 text-white px-2 py-1 rounded text-xs font-semibold backdrop-blur-sm";
-                    label.innerText = `User ID: ${targetId.slice(0, 4)}`;
-                    
-                    wrapper.appendChild(remoteMedia);
-                    wrapper.appendChild(label);
-                    remoteVideosRef.current.appendChild(wrapper);
-                }
-            }
-            remoteMedia.srcObject = event.streams[0];
+            setRemoteStreams(prev => ({ ...prev, [targetId]: event.streams[0] }));
         };
 
         pc.oniceconnectionstatechange = () => {
             if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
-                const wrapper = document.getElementById(`wrapper-${targetId}`);
-                if (wrapper) wrapper.remove();
+                setRemoteStreams(prev => {
+                    const copy = { ...prev };
+                    delete copy[targetId];
+                    return copy;
+                });
                 pc.close();
                 peerConnections.current.delete(targetId);
             }
@@ -159,16 +204,42 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                 
                 if (senderId === currentUserId) continue;
 
-                if (type === "USER_JOINED_VOICE") {
+                if (type === "VOICE_ROOM_STATE") {
+                    const usersArr = content.users as {id: string, username: string}[];
+                    const newRoomUsers = { ...roomUsers };
+                    for (const u of usersArr) {
+                        if (u.id !== currentUserId) {
+                            newRoomUsers[u.id] = { username: u.username, isVideoOff: false, isMuted: false };
+                        }
+                    }
+                    setRoomUsers(newRoomUsers);
+                } else if (type === "USER_JOINED_VOICE") {
+                    // New user joined. Add them and initiate WebRTC.
+                    setRoomUsers(prev => ({ ...prev, [content.id]: { username: content.username, isVideoOff: false, isMuted: false } }));
                     getOrCreatePeerConnection(content.id, true);
                 } else if (type === "USER_LEFT_VOICE") {
+                    setRoomUsers(prev => {
+                        const copy = { ...prev };
+                        delete copy[content.id];
+                        return copy;
+                    });
+                    setRemoteStreams(prev => {
+                        const copy = { ...prev };
+                        delete copy[content.id];
+                        return copy;
+                    });
+                    if (pinnedUserId === content.id) setPinnedUserId(null);
+                    
                     const pc = peerConnections.current.get(content.id);
                     if (pc) {
                         pc.close();
                         peerConnections.current.delete(content.id);
-                        const wrapper = document.getElementById(`wrapper-${content.id}`);
-                        if (wrapper) wrapper.remove();
                     }
+                } else if (type === "MEDIA_STATE_CHANGED" && senderId) {
+                    setRoomUsers(prev => {
+                        if (!prev[senderId]) return prev;
+                        return { ...prev, [senderId]: { ...prev[senderId], ...content } };
+                    });
                 } else if (type === "WEBRTC_OFFER" && targetId === currentUserId) {
                     const pc = getOrCreatePeerConnection(senderId, false);
                     await pc.setRemoteDescription(new RTCSessionDescription(content));
@@ -196,51 +267,131 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
         handleSignals();
     }, [incomingSignals, currentUserId]);
 
-    return (
-        <div className={`flex-1 flex flex-col items-center justify-center p-6 bg-gray-800 absolute inset-0 z-40 overflow-y-auto ${!isVisible ? 'hidden' : ''}`}>
-            <div className="w-full max-w-6xl h-full flex flex-col">
-                <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                        <svg className="w-6 h-6 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z"></path>
-                            <path d="M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z"></path>
-                        </svg>
-                        Voice Channel: <span className="text-gray-400 capitalize">{channelId}</span>
-                    </h2>
-                    <button 
-                        onClick={onDisconnect}
-                        className="px-4 py-2 bg-red-500/20 text-red-500 hover:bg-red-500 hover:text-white rounded-lg font-semibold transition-colors flex items-center gap-2"
-                    >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" />
-                        </svg>
-                        Disconnect
-                    </button>
-                </div>
-                
-                <div className="flex-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" ref={remoteVideosRef}>
-                    <div className="relative rounded-xl overflow-hidden aspect-video bg-gray-800 shadow-md border border-gray-700">
-                        <video 
-                            ref={localVideoRef} 
-                            autoPlay 
-                            muted 
-                            playsInline 
-                            className={`w-full h-full object-cover mirror transform scale-x-[-1] transition-opacity ${isVideoOff ? 'opacity-0' : 'opacity-100'}`} 
+    const togglePin = (id: string) => {
+        setPinnedUserId(prev => prev === id ? null : id);
+    };
+
+    // Prepare all video items (local + remotes)
+    const items = [
+        { id: currentUserId, stream: localStream, username: 'You', isVideoOff, isMuted, isLocal: true },
+        ...Object.entries(roomUsers).map(([id, u]) => ({
+            id, stream: remoteStreams[id] || null, username: u.username, isVideoOff: u.isVideoOff, isMuted: u.isMuted, isLocal: false
+        }))
+    ];
+
+    const renderVideoGrid = () => {
+        if (pinnedUserId && items.find(i => i.id === pinnedUserId)) {
+            const pinnedItem = items.find(i => i.id === pinnedUserId)!;
+            const others = items.filter(i => i.id !== pinnedUserId);
+            return (
+                <div className="flex flex-col h-full w-full gap-4 pb-20">
+                    <div className="flex-1 w-full rounded-2xl overflow-hidden bg-black shadow-2xl">
+                        <RemoteVideo 
+                            stream={pinnedItem.stream} 
+                            username={pinnedItem.username} 
+                            isVideoOff={pinnedItem.isVideoOff} 
+                            isMuted={pinnedItem.isMuted} 
+                            isPinned={true} 
+                            isLocal={pinnedItem.isLocal} 
+                            onClick={() => togglePin(pinnedItem.id)} 
                         />
-                        {isVideoOff && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-gray-900 text-gray-400">
-                                <svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3l18 18" />
-                                </svg>
-                            </div>
-                        )}
-                        <div className="absolute bottom-3 left-3 bg-indigo-500 text-white px-2 py-1 rounded text-xs font-semibold shadow border border-indigo-400 flex items-center gap-1.5">
-                            <div className={`w-2 h-2 rounded-full ${isMuted ? 'bg-red-500' : 'bg-green-400 animate-pulse'}`}></div>
-                            You (Local)
-                        </div>
                     </div>
+                    {others.length > 0 && (
+                        <div className="h-40 w-full flex gap-4 overflow-x-auto pb-2 flex-shrink-0 snap-x">
+                            {others.map(item => (
+                                <div key={item.id} className="h-full w-[280px] flex-shrink-0 snap-center">
+                                    <RemoteVideo 
+                                        stream={item.stream} 
+                                        username={item.username} 
+                                        isVideoOff={item.isVideoOff} 
+                                        isMuted={item.isMuted} 
+                                        isPinned={false} 
+                                        isLocal={item.isLocal} 
+                                        onClick={() => togglePin(item.id)} 
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
+            );
+        }
+
+        return (
+            <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-20 items-center content-center">
+                 {items.map(item => (
+                     <div key={item.id} className="w-full h-full max-h-[40vh] min-h-[250px] transition-all">
+                         <RemoteVideo 
+                             stream={item.stream} 
+                             username={item.username} 
+                             isVideoOff={item.isVideoOff} 
+                             isMuted={item.isMuted} 
+                             isPinned={false} 
+                             isLocal={item.isLocal} 
+                             onClick={() => togglePin(item.id)} 
+                         />
+                     </div>
+                 ))}
+            </div>
+        );
+    };
+
+    return (
+        <div className={`flex-1 flex flex-col items-center p-6 bg-gray-800 overflow-hidden relative ${!isVisible ? 'hidden' : ''}`}>
+            <div className="w-full flex justify-between items-center mb-4 flex-shrink-0">
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <svg className="w-5 h-5 text-green-500 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z"></path>
+                        <path d="M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z"></path>
+                    </svg>
+                    Voice Channel: <span className="text-gray-400 capitalize">{channelId}</span>
+                </h2>
+                <div className="flex gap-2 text-sm text-gray-400 bg-gray-900/50 px-3 py-1.5 rounded-full border border-gray-700/50">
+                    <span className="font-semibold text-gray-200">{items.length}</span> In Call
+                </div>
+            </div>
+            
+            <div className="flex-1 w-full max-w-7xl relative">
+                {renderVideoGrid()}
+            </div>
+            
+            {/* Discord-style floating control bar */}
+            <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 flex items-center gap-4 bg-gray-900/95 backdrop-blur-md px-6 py-3 rounded-2xl shadow-xl border border-gray-700 z-50">
+                <button 
+                    onClick={onToggleVideo}
+                    className={`w-12 h-12 flex items-center justify-center rounded-full transition-all ${isVideoOff ? 'bg-gray-800 text-red-500 hover:bg-gray-700' : 'bg-gray-700 text-white hover:bg-gray-600'}`}
+                    title={isVideoOff ? "Turn on Camera" : "Turn off Camera"}
+                >
+                    {isVideoOff ? (
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3l18 18" /></svg>
+                    ) : (
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                    )}
+                </button>
+                
+                <button 
+                    onClick={onToggleMute}
+                    className={`w-12 h-12 flex items-center justify-center rounded-full transition-all ${isMuted ? 'bg-gray-800 text-red-500 hover:bg-gray-700' : 'bg-gray-700 text-white hover:bg-gray-600'}`}
+                    title={isMuted ? "Unmute" : "Mute"}
+                >
+                    {isMuted ? (
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3l18 18" /></svg>
+                    ) : (
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+                    )}
+                </button>
+
+                <div className="w-[1px] h-8 bg-gray-700 mx-2"></div>
+
+                <button 
+                    onClick={onDisconnect}
+                    className="w-12 h-12 flex items-center justify-center rounded-full bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-all"
+                    title="Disconnect"
+                >
+                    <svg className="w-6 h-6 transform rotate-135" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                    </svg>
+                </button>
             </div>
         </div>
     );

@@ -31,7 +31,9 @@ export default {
 		},
 	},
 	release: {
-		baseUrl: "https://github.com/SashaGoncharov19/sevencord/releases/latest/download"
+		// The GitHub release latest/download URL works perfectly for Electrobun's updater
+		// It will append `/update.json` and download the patch files from here.
+		baseUrl: "https://github.com/SashaGoncharov19/sevencord/releases/latest/download",
 	},
 	scripts: {
 		postBuild: "./scripts/postBuild.ts",
