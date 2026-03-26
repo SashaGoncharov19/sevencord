@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { playSelfJoin, playSelfLeave, playUserJoin, playUserLeave } from "../utils/soundFX";
 
 interface VoiceRoomProps {
     channelId: string;
@@ -13,6 +14,9 @@ interface VoiceRoomProps {
     isVisible: boolean;
     audioDeviceId?: string;
     videoDeviceId?: string;
+    videoQuality?: string;
+    noiseSuppression?: boolean;
+    echoCancellation?: boolean;
 }
 
 interface RoomUser {
@@ -75,7 +79,7 @@ function RemoteVideo({
     );
 }
 
-export default function VoiceRoom({ channelId, currentUserId, onSendSignal, incomingSignals, onDisconnect, isMuted, isVideoOff, onToggleMute, onToggleVideo, isVisible, audioDeviceId, videoDeviceId }: VoiceRoomProps) {
+export default function VoiceRoom({ channelId, currentUserId, onSendSignal, incomingSignals, onDisconnect, isMuted, isVideoOff, onToggleMute, onToggleVideo, isVisible, audioDeviceId, videoDeviceId, videoQuality, noiseSuppression, echoCancellation }: VoiceRoomProps) {
     const [localStream, setLocalStream] = useState<MediaStream | null>(null);
     const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
     const [roomUsers, setRoomUsers] = useState<Record<string, RoomUser>>({});
@@ -99,8 +103,31 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
             return;
         }
 
-        const audioConstraints = audioDeviceId && audioDeviceId !== "default" ? { deviceId: { exact: audioDeviceId } } : true;
-        const videoConstraints = videoDeviceId && videoDeviceId !== "default" ? { deviceId: { exact: videoDeviceId } } : true;
+        let audioConstraints: any = {
+            echoCancellation: echoCancellation ?? true,
+            noiseSuppression: noiseSuppression ?? true,
+            autoGainControl: true
+        };
+        
+        if (audioDeviceId && audioDeviceId !== "default") {
+            audioConstraints.deviceId = { exact: audioDeviceId };
+        }
+
+        let videoConstraints: any = true;
+        if (videoQuality === "1080p") {
+            videoConstraints = { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } };
+        } else if (videoQuality === "720p") {
+            videoConstraints = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } };
+        } else if (videoQuality === "360p") {
+            videoConstraints = { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 24 } };
+        } else if (videoQuality === "auto") {
+            videoConstraints = true;
+        }
+
+        if (videoDeviceId && videoDeviceId !== "default") {
+            if (videoConstraints === true) videoConstraints = {};
+            videoConstraints.deviceId = { exact: videoDeviceId };
+        }
 
         navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: audioConstraints })
             .catch(e => {
@@ -108,6 +135,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                 return navigator.mediaDevices.getUserMedia({ video: false, audio: audioConstraints });
             })
             .then(stream => {
+                playSelfJoin();
                 setLocalStream(stream);
                 onSendSignal("JOIN_VOICE", { peerId: currentUserId }, undefined);
                 // Immediately broadcast our media state
@@ -120,6 +148,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
             });
 
         return () => {
+            playSelfLeave();
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
             }
@@ -155,7 +184,15 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
 
         if (localStream) {
             localStream.getTracks().forEach(track => {
-                pc.addTrack(track, localStream);
+                const sender = pc.addTrack(track, localStream);
+                // Boost bitrate dynamically for better quality
+                try {
+                    const params = sender.getParameters();
+                    if (!params.encodings) params.encodings = [{}];
+                    if (track.kind === "video") params.encodings[0].maxBitrate = 4000000;
+                    else if (track.kind === "audio") params.encodings[0].maxBitrate = 128000;
+                    sender.setParameters(params).catch(e => console.warn(e));
+                } catch (e) { }
             });
         }
 
@@ -215,9 +252,11 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                     setRoomUsers(newRoomUsers);
                 } else if (type === "USER_JOINED_VOICE") {
                     // New user joined. Add them and initiate WebRTC.
+                    playUserJoin();
                     setRoomUsers(prev => ({ ...prev, [content.id]: { username: content.username, isVideoOff: false, isMuted: false } }));
                     getOrCreatePeerConnection(content.id, true);
                 } else if (type === "USER_LEFT_VOICE") {
+                    playUserLeave();
                     setRoomUsers(prev => {
                         const copy = { ...prev };
                         delete copy[content.id];

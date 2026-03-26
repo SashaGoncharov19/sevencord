@@ -37,6 +37,9 @@ export default function ChatLayout({ serverUrl, token, onDisconnect }: ChatLayou
 	const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
 	const [selectedAudioInput, setSelectedAudioInput] = useState<string>("default");
 	const [selectedVideoInput, setSelectedVideoInput] = useState<string>("default");
+	const [videoQuality, setVideoQuality] = useState<string>("720p");
+	const [noiseSuppression, setNoiseSuppression] = useState<boolean>(true);
+	const [echoCancellation, setEchoCancellation] = useState<boolean>(true);
 	
 	const wsRef = useRef<WebSocket | null>(null);
 	const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -363,6 +366,9 @@ export default function ChatLayout({ serverUrl, token, onDisconnect }: ChatLayou
 						isVisible={activeChannel === "lobby"}
 						audioDeviceId={selectedAudioInput}
 						videoDeviceId={selectedVideoInput}
+						videoQuality={videoQuality}
+						noiseSuppression={noiseSuppression}
+						echoCancellation={echoCancellation}
 					/>
 				)}
 			</div>
@@ -408,7 +414,7 @@ export default function ChatLayout({ serverUrl, token, onDisconnect }: ChatLayou
 							</button>
 						</div>
 						
-						<div className="p-6 space-y-6 flex-1">
+						<div className="p-6 space-y-6 flex-1 overflow-y-auto max-h-[70vh]">
 							<div className="space-y-2">
 								<label className="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2 mb-3">
 									<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
@@ -453,10 +459,63 @@ export default function ChatLayout({ serverUrl, token, onDisconnect }: ChatLayou
 								</div>
 							</div>
 							
+							<hr className="border-gray-700/50 my-6" />
+
+							<div className="space-y-2">
+								<label className="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2 mb-3">
+									<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+									Video Quality
+								</label>
+								<div className="relative">
+									<select 
+										value={videoQuality} 
+										onChange={(e) => setVideoQuality(e.target.value)}
+										className="w-full bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 block p-3.5 appearance-none shadow-inner"
+									>
+										<option value="auto">Auto (Let Browser Decide)</option>
+										<option value="1080p">1080p (High Quality HD)</option>
+										<option value="720p">720p (Standard HD)</option>
+										<option value="360p">360p (Low Bandwidth)</option>
+									</select>
+									<div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-400">
+										<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+									</div>
+								</div>
+							</div>
+
+							<div className="space-y-5 pt-3">
+                                <label className="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2 mb-3">
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
+                                    Audio Processing
+                                </label>
+                                
+                                <label className="flex items-center justify-between cursor-pointer group bg-gray-900/50 p-4 rounded-xl border border-gray-700/50 hover:bg-gray-800 transition-colors">
+                                    <div>
+                                        <div className="text-gray-200 font-medium">Noise Suppression</div>
+                                        <div className="text-xs text-gray-400 mt-0.5 max-w-[280px]">Automatically filters out background noise from typing, fans, or environment.</div>
+                                    </div>
+                                    <div className={`w-11 h-6 rounded-full transition-colors relative flex-shrink-0 ${noiseSuppression ? 'bg-indigo-500' : 'bg-gray-700'}`}>
+                                        <div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${noiseSuppression ? 'translate-x-5' : ''}`}></div>
+                                    </div>
+                                    <input type="checkbox" className="hidden" checked={noiseSuppression} onChange={(e) => setNoiseSuppression(e.target.checked)} />
+                                </label>
+
+                                <label className="flex items-center justify-between cursor-pointer group bg-gray-900/50 p-4 rounded-xl border border-gray-700/50 hover:bg-gray-800 transition-colors">
+                                    <div>
+                                        <div className="text-gray-200 font-medium">Echo Cancellation</div>
+                                        <div className="text-xs text-gray-400 mt-0.5 max-w-[280px]">Prevents audio feedback when you are using speakers instead of a headset.</div>
+                                    </div>
+                                    <div className={`w-11 h-6 rounded-full transition-colors relative flex-shrink-0 ${echoCancellation ? 'bg-indigo-500' : 'bg-gray-700'}`}>
+                                        <div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${echoCancellation ? 'translate-x-5' : ''}`}></div>
+                                    </div>
+                                    <input type="checkbox" className="hidden" checked={echoCancellation} onChange={(e) => setEchoCancellation(e.target.checked)} />
+                                </label>
+                            </div>
+
 							<div className="flex bg-indigo-500/10 border border-indigo-500/20 p-4 rounded-xl mt-4">
 								<svg className="w-5 h-5 text-indigo-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
 								<div className="ml-3 text-sm text-indigo-200 tracking-wide font-medium">
-									Changing devices while in a call will require you to disconnect and reconnect to the voice channel for the changes to take effect.
+									Changing devices or quality settings while in a call will require you to disconnect and reconnect to the voice channel for the changes to fully take effect.
 								</div>
 							</div>
 						</div>
