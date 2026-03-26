@@ -47,9 +47,15 @@ function App() {
 		setAppState("CONNECT_URL");
 	};
 
-	// Query-based or Hash-based routing for splash screen components
-	const urlParams = new URLSearchParams(window.location.search);
-	if (urlParams.get("screen") === "updater" || window.location.hash.includes("updater")) {
+	// We use `window.innerWidth` to distinct the 400px wide UpdaterWindow from the 1200px MainWindow
+	// because appending ? or # to views:// protocols crashes Electrobun's asset routing.
+	const [isUpdater] = useState(
+		window.innerWidth < 500 || 
+		window.location.search.includes("updater") || 
+		window.location.hash.includes("updater")
+	);
+
+	if (isUpdater) {
 		return <UpdaterScreen />;
 	}
 

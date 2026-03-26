@@ -85,7 +85,7 @@ function startUpdaterWindow() {
 
 	const updaterWindow = new BrowserWindow({
 		title: "SevenCord Updater",
-		url: `${url}${url.includes('?') ? '&' : '?'}screen=updater`,
+		url: url, // Strict filename mapping to prevent views:// 404s
 		frame: { width: 400, height: 300, x: 400, y: 300 },
 		rpc,
 		renderer: process.platform === "win32" ? "cef" : "native",
