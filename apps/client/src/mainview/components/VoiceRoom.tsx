@@ -217,32 +217,8 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [channelId]);
 
-    // CRITICAL FIX: When localStream becomes available, retroactively add tracks
-    // to any PeerConnections that were created while getUserMedia was still pending.
-    // This also re-negotiates the connection so the remote side gets our tracks.
-    useEffect(() => {
-        if (!localStream) return;
 
-        for (const [targetId, pc] of peerConnections.current.entries()) {
-            const senders = pc.getSenders();
-            if (senders.length === 0) {
-                console.log(`[VoiceRoom] Retroactive track injection for peer: ${targetId}`);
-                addTracksToPC(pc, localStream);
-
-                // Re-negotiate: create a new offer and send it so the remote side
-                // knows we have tracks now
-                pc.createOffer()
-                    .then(offer => {
-                        offer.sdp = mungeSDP(offer.sdp);
-                        return pc.setLocalDescription(offer);
-                    })
-                    .then(() => {
-                        onSendSignal("WEBRTC_OFFER", pc.localDescription, targetId);
-                    })
-                    .catch(e => console.error("Error re-negotiating after stream ready:", e));
-            }
-        }
-    }, [localStream]);
+    // No retroactive track injection needed — signal processing is gated on localStream
 
     // Handle Mute / Video Toggle Locally and Broadcast
     useEffect(() => {
@@ -309,13 +285,21 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
             }
 
             // Replace camera track with screen track in all PeerConnections
-            for (const pc of peerConnections.current.values()) {
+            for (const [peerId, pc] of peerConnections.current.entries()) {
                 const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
                 if (videoSender) {
                     await videoSender.replaceTrack(screenTrack).catch(console.error);
                 } else {
-                    // No video sender exists (camera was off) — add the screen track directly
+                    // No video sender (camera was off) — add track + renegotiate
                     pc.addTrack(screenTrack, screenStreamRef.current!);
+                    try {
+                        const offer = await pc.createOffer();
+                        offer.sdp = mungeSDP(offer.sdp);
+                        await pc.setLocalDescription(offer);
+                        onSendSignal("WEBRTC_OFFER", pc.localDescription, peerId);
+                    } catch (e) {
+                        console.error("Screen share renegotiation failed:", e);
+                    }
                 }
             }
 
@@ -412,6 +396,8 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
     };
 
     useEffect(() => {
+        if (!localStream) return; // Don't process ANY signals until we have our local stream
+
         const handleSignals = async () => {
             for (const sig of incomingSignals) {
                 const sigId = sig.id || JSON.stringify(sig);
@@ -484,23 +470,6 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                     } else if (pinnedUserId === senderId) {
                         setPinnedUserId(null);
                     }
-                } else if (type === "INIT_PEER") {
-                    // Server-driven peer initialization: I am the initiator, targetId is the new joiner
-                    const initiatorId = content.initiatorId as string;
-                    const peerId = content.targetId as string;
-                    if (initiatorId !== currentUserId) continue; // Not for me
-                    
-                    console.log(`[VoiceRoom] INIT_PEER: I (${currentUserId}) should initiate connection to ${peerId}`);
-                    
-                    // Destroy any stale connection
-                    const stalePc = peerConnections.current.get(peerId);
-                    if (stalePc) {
-                        stalePc.close();
-                        peerConnections.current.delete(peerId);
-                    }
-                    delete candidateQueue.current[peerId];
-                    
-                    getOrCreatePeerConnection(peerId, true);
                 } else if (type === "WEBRTC_OFFER" && targetId === currentUserId) {
                     console.log(`[VoiceRoom] Received WEBRTC_OFFER from ${senderId}`);
                     // Destroy any existing PC for this sender to handle re-negotiation cleanly
@@ -554,7 +523,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
         };
 
         handleSignals();
-    }, [incomingSignals, currentUserId]);
+    }, [incomingSignals, currentUserId, localStream]);
 
     const togglePin = (id: string) => {
         setPinnedUserId(prev => prev === id ? null : id);

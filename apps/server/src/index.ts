@@ -254,16 +254,6 @@ const wsRoutes = new Elysia()
           type: "USER_JOINED_VOICE",
           content: { id, username: activeUsers.get(ws.id)?.username, channelId }
         });
-
-        // Send targeted INIT_PEER signals to each existing member
-        // This tells each existing member to create a fresh peer connection to the new joiner
-        for (const existingUser of existingUserIds) {
-          ws.publish("chat", {
-            type: "INIT_PEER",
-            content: { initiatorId: existingUser.id, targetId: id },
-            senderId: "server"
-          });
-        }
       } else if (rawMessage.type === "LEAVE_VOICE") {
         const channelId = rawMessage.channelId || 'lobby';
         console.log(`[Server] LEAVE_VOICE: user=${id}, channelId=${channelId}, roomHas=${voiceRooms.get(channelId)?.has(ws.id)}`);
