@@ -123,6 +123,8 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
     useEffect(() => {
         let isMounted = true;
 
+        console.log(`[VoiceRoom] MOUNT: channelId=${channelId}, currentUserId=${currentUserId}`);
+
         // Clear stale signal processing from previous mount
         processedSignals.current.clear();
         candidateQueue.current = {};
@@ -187,6 +189,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                 playSelfJoin();
                 localStreamRef.current = stream;
                 setLocalStream(stream);
+                console.log(`[VoiceRoom] getUserMedia SUCCESS, sending JOIN_VOICE`);
                 onSendSignal("JOIN_VOICE", { peerId: currentUserId }, undefined);
                 onSendSignal("MEDIA_STATE_CHANGED", { isVideoOff, isMuted }, undefined);
             })
@@ -199,6 +202,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
 
         return () => {
             isMounted = false;
+            console.log(`[VoiceRoom] UNMOUNT/CLEANUP: channelId=${channelId}`);
             if (localStreamRef.current) {
                 playSelfLeave();
                 localStreamRef.current.getTracks().forEach(track => track.stop());
@@ -222,7 +226,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
         for (const [targetId, pc] of peerConnections.current.entries()) {
             const senders = pc.getSenders();
             if (senders.length === 0) {
-                // This PC was created before our stream was ready — inject tracks now
+                console.log(`[VoiceRoom] Retroactive track injection for peer: ${targetId}`);
                 addTracksToPC(pc, localStream);
 
                 // Re-negotiate: create a new offer and send it so the remote side
@@ -287,6 +291,11 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
         }
 
         try {
+            if (!navigator.mediaDevices.getDisplayMedia) {
+                alert("Screen sharing is not supported on this platform. On macOS, screen sharing requires running with the Chromium engine (CEF). Please contact the developer.");
+                return;
+            }
+
             const screenStream = await navigator.mediaDevices.getDisplayMedia({
                 video: { cursor: "always" } as any,
                 audio: false
@@ -353,8 +362,8 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
         const pc = new RTCPeerConnection(rtcConfig);
         peerConnections.current.set(targetId, pc);
 
-        // Use the ref so we get the absolute latest stream, not a stale closure
         const stream = localStreamRef.current;
+        console.log(`[VoiceRoom] getOrCreatePC: targetId=${targetId}, isInitiator=${isInitiator}, hasStream=${!!stream}`);
         if (stream) {
             addTracksToPC(pc, stream);
         }
@@ -411,6 +420,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                 if (senderId === currentUserId) continue;
 
                 if (type === "VOICE_ROOM_STATE") {
+                    console.log(`[VoiceRoom] Received VOICE_ROOM_STATE:`, content);
                     const usersArr = content.users as {id: string, username: string}[];
                     const newRoomUsers: Record<string, RoomUser> = {};
                     for (const u of usersArr) {
@@ -420,8 +430,8 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                     }
                     setRoomUsers(newRoomUsers);
                 } else if (type === "USER_JOINED_VOICE") {
-                    if (content.id === currentUserId) continue; // Skip our own join
-
+                    if (content.id === currentUserId) continue;
+                    console.log(`[VoiceRoom] USER_JOINED_VOICE: ${content.id} (${content.username})`);
                     playUserJoin();
                     setRoomUsers(prev => ({ ...prev, [content.id]: { username: content.username, isVideoOff: false, isMuted: false } }));
                     
@@ -435,6 +445,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                     
                     getOrCreatePeerConnection(content.id, true);
                 } else if (type === "USER_LEFT_VOICE") {
+                    console.log(`[VoiceRoom] USER_LEFT_VOICE: ${content.id}`);
                     playUserLeave();
                     setRoomUsers(prev => {
                         const copy = { ...prev };
@@ -472,6 +483,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                         setPinnedUserId(null);
                     }
                 } else if (type === "WEBRTC_OFFER" && targetId === currentUserId) {
+                    console.log(`[VoiceRoom] Received WEBRTC_OFFER from ${senderId}`);
                     // Destroy any existing PC for this sender to handle re-negotiation cleanly
                     const existingPc = peerConnections.current.get(senderId);
                     if (existingPc) {
@@ -494,6 +506,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                         delete candidateQueue.current[senderId];
                     }
                 } else if (type === "WEBRTC_ANSWER" && targetId === currentUserId) {
+                    console.log(`[VoiceRoom] Received WEBRTC_ANSWER from ${senderId}`);
                     const pc = peerConnections.current.get(senderId);
                     if (pc) {
                         await pc.setRemoteDescription(new RTCSessionDescription(content));

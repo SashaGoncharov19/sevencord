@@ -19,7 +19,8 @@ export default {
 			bundleCEF: false,
 			entitlements: {
 				"com.apple.security.device.camera": "Required for voice and video channel communications.",
-				"com.apple.security.device.audio-input": "Required for voice channel communications."
+				"com.apple.security.device.audio-input": "Required for voice channel communications.",
+				"com.apple.security.cs.allow-unsigned-executable-memory": "Required for WebRTC screen capture."
 			}
 		},
 		linux: {

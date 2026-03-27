@@ -43,6 +43,12 @@ export default function ChatLayout({ serverUrl, token, onDisconnect }: ChatLayou
 	
 	const wsRef = useRef<WebSocket | null>(null);
 	const messagesEndRef = useRef<HTMLDivElement | null>(null);
+	const voiceChannelRef = useRef<string | null>(null);
+
+	// Keep ref always in sync with state
+	useEffect(() => {
+		voiceChannelRef.current = voiceChannel;
+	}, [voiceChannel]);
 
 	// Connect to WebSocket
 	useEffect(() => {
@@ -160,13 +166,17 @@ export default function ChatLayout({ serverUrl, token, onDisconnect }: ChatLayou
 	};
 
 	const handleSendSignal = (type: string, content: any, targetId?: string) => {
+		const ch = voiceChannelRef.current;
+		console.log(`[ChatLayout] sendSignal: type=${type}, channelId=${ch}, targetId=${targetId}`);
 		if (wsRef.current?.readyState === WebSocket.OPEN) {
 			wsRef.current.send(JSON.stringify({
 				type,
 				content,
-				channelId: voiceChannel,
+				channelId: ch,
 				targetId
 			}));
+		} else {
+			console.warn(`[ChatLayout] sendSignal FAILED: WS not open, type=${type}`);
 		}
 	};
 

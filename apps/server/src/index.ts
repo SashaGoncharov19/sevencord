@@ -212,6 +212,7 @@ const wsRoutes = new Elysia()
         });
       } else if (rawMessage.type === "JOIN_VOICE") {
         const channelId = rawMessage.channelId || 'lobby';
+        console.log(`[Server] JOIN_VOICE: user=${id}, channelId=${channelId}`);
         
         if (!voiceRooms.has(channelId)) {
           voiceRooms.set(channelId, new Set());
@@ -234,6 +235,7 @@ const wsRoutes = new Elysia()
         });
       } else if (rawMessage.type === "LEAVE_VOICE") {
         const channelId = rawMessage.channelId || 'lobby';
+        console.log(`[Server] LEAVE_VOICE: user=${id}, channelId=${channelId}, roomHas=${voiceRooms.get(channelId)?.has(ws.id)}`);
         if (voiceRooms.has(channelId)) {
           voiceRooms.get(channelId)!.delete(ws.id);
         }
