@@ -313,6 +313,9 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                 const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
                 if (videoSender) {
                     await videoSender.replaceTrack(screenTrack).catch(console.error);
+                } else {
+                    // No video sender exists (camera was off) — add the screen track directly
+                    pc.addTrack(screenTrack, screenStreamRef.current!);
                 }
             }
 
@@ -321,8 +324,8 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                 const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
                 if (oldVideoTrack) localStreamRef.current.removeTrack(oldVideoTrack);
                 localStreamRef.current.addTrack(screenTrack);
-                setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
             }
+            setLocalStream(new MediaStream((localStreamRef.current || screenStreamRef.current!).getTracks()));
 
             setIsScreenSharing(true);
             onSendSignal("SCREEN_SHARE_CHANGED", { isSharing: true }, undefined);
@@ -476,12 +479,28 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                         if (!prev[senderId]) return prev;
                         return { ...prev, [senderId]: { ...prev[senderId], isScreenSharing: sharing } };
                     });
-                    // Auto-pin the person who started sharing
                     if (sharing) {
                         setPinnedUserId(senderId);
                     } else if (pinnedUserId === senderId) {
                         setPinnedUserId(null);
                     }
+                } else if (type === "INIT_PEER") {
+                    // Server-driven peer initialization: I am the initiator, targetId is the new joiner
+                    const initiatorId = content.initiatorId as string;
+                    const peerId = content.targetId as string;
+                    if (initiatorId !== currentUserId) continue; // Not for me
+                    
+                    console.log(`[VoiceRoom] INIT_PEER: I (${currentUserId}) should initiate connection to ${peerId}`);
+                    
+                    // Destroy any stale connection
+                    const stalePc = peerConnections.current.get(peerId);
+                    if (stalePc) {
+                        stalePc.close();
+                        peerConnections.current.delete(peerId);
+                    }
+                    delete candidateQueue.current[peerId];
+                    
+                    getOrCreatePeerConnection(peerId, true);
                 } else if (type === "WEBRTC_OFFER" && targetId === currentUserId) {
                     console.log(`[VoiceRoom] Received WEBRTC_OFFER from ${senderId}`);
                     // Destroy any existing PC for this sender to handle re-negotiation cleanly

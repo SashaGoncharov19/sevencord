@@ -29,7 +29,7 @@ export default function ChatLayout({ serverUrl, token, onDisconnect }: ChatLayou
 	const [activeChannel, setActiveChannel] = useState<string>("general");
 	const [voiceChannel, setVoiceChannel] = useState<string | null>(null);
 	const [isMuted, setIsMuted] = useState<boolean>(false);
-	const [isVideoOff, setIsVideoOff] = useState<boolean>(false);
+	const [isVideoOff, setIsVideoOff] = useState<boolean>(true);
 	const [incomingSignals, setIncomingSignals] = useState<any[]>([]);
 	const [globalVoiceUsers, setGlobalVoiceUsers] = useState<Record<string, User[]>>({});
 	
@@ -108,7 +108,7 @@ export default function ChatLayout({ serverUrl, token, onDisconnect }: ChatLayou
 					type: data.type, content: data.content,
 					senderId: "server", targetId: "all", id: crypto.randomUUID()
 				}]);
-			} else if (["WEBRTC_OFFER", "WEBRTC_ANSWER", "WEBRTC_ICE_CANDIDATE", "MEDIA_STATE_CHANGED", "SCREEN_SHARE_CHANGED"].includes(data.type)) {
+			} else if (["WEBRTC_OFFER", "WEBRTC_ANSWER", "WEBRTC_ICE_CANDIDATE", "MEDIA_STATE_CHANGED", "SCREEN_SHARE_CHANGED", "INIT_PEER"].includes(data.type)) {
 				setIncomingSignals(prev => [...prev, {
 					type: data.type,
 					content: data.content,
@@ -324,23 +324,46 @@ export default function ChatLayout({ serverUrl, token, onDisconnect }: ChatLayou
 					</div>
 				</div>
 				<div className={`flex-1 flex flex-col min-h-0 ${activeChannel === 'lobby' ? 'hidden' : ''}`}>
-					<div className="flex-1 overflow-y-auto p-4 space-y-6">
-						{messages.filter(m => (m.channelId || 'general') === activeChannel).map((msg: ChatMessage) => (
-							<div key={msg.id} className="flex gap-4 group">
-								<div className="w-10 h-10 rounded-full bg-indigo-500 overflow-hidden flex-shrink-0 cursor-pointer mt-0.5">
-									<img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${msg.username}`} alt="avatar" />
-								</div>
-								<div>
-									<div className="flex items-baseline gap-2">
-										<span className="font-medium hover:underline cursor-pointer text-indigo-400">{msg.username}</span>
-										<span className="text-xs text-gray-400">{new Date(msg.timestamp).toLocaleTimeString()}</span>
+					<div className="flex-1 overflow-y-auto p-4 space-y-4">
+						{(() => {
+							const filtered = messages.filter(m => (m.channelId || 'general') === activeChannel);
+							const formatTs = (ts: number) => {
+								const d = new Date(ts);
+								const now = new Date();
+								const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+								if (d.toDateString() === now.toDateString()) return `Today at ${time}`;
+								const y = new Date(now); y.setDate(now.getDate() - 1);
+								if (d.toDateString() === y.toDateString()) return `Yesterday at ${time}`;
+								return `${d.toLocaleDateString([], { month: '2-digit', day: '2-digit', year: 'numeric' })} ${time}`;
+							};
+							const groups: { senderId: string; username: string; timestamp: number; msgs: ChatMessage[] }[] = [];
+							for (const msg of filtered) {
+								const last = groups[groups.length - 1];
+								if (last && last.senderId === msg.senderId && (msg.timestamp - last.msgs[last.msgs.length - 1].timestamp) < 300000) {
+									last.msgs.push(msg);
+								} else {
+									groups.push({ senderId: msg.senderId, username: msg.username, timestamp: msg.timestamp, msgs: [msg] });
+								}
+							}
+							return groups.map((g) => (
+								<div key={g.msgs[0].id} className="flex gap-4 hover:bg-gray-600/20 px-1 py-0.5 rounded -mx-1">
+									<div className="w-10 h-10 rounded-full bg-indigo-500 overflow-hidden flex-shrink-0 cursor-pointer mt-0.5">
+										<img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${g.username}`} alt="avatar" />
 									</div>
-									<div className="text-gray-200 mt-1 break-words">
-										{msg.content}
+									<div className="flex-1 min-w-0">
+										<div className="flex items-baseline gap-2">
+											<span className="font-medium hover:underline cursor-pointer text-indigo-400">{g.username}</span>
+											<span className="text-xs text-gray-500">{formatTs(g.timestamp)}</span>
+										</div>
+										{g.msgs.map((msg) => (
+											<div key={msg.id} className="text-gray-200 mt-0.5 break-words">
+												{msg.content}
+											</div>
+										))}
 									</div>
 								</div>
-							</div>
-						))}
+							));
+						})()}
 						<div ref={messagesEndRef} />
 					</div>
 					

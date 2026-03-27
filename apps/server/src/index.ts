@@ -214,25 +214,56 @@ const wsRoutes = new Elysia()
         const channelId = rawMessage.channelId || 'lobby';
         console.log(`[Server] JOIN_VOICE: user=${id}, channelId=${channelId}`);
         
+        // FORCED CLEANUP: Remove user from ALL voice rooms first (prevents ghost presence)
+        for (const [existingChannelId, participants] of voiceRooms.entries()) {
+          if (participants.has(ws.id)) {
+            participants.delete(ws.id);
+            ws.unsubscribe("voice:" + existingChannelId);
+            ws.publish("chat", {
+              type: "USER_LEFT_VOICE",
+              content: { id, channelId: existingChannelId }
+            });
+            console.log(`[Server] Forced cleanup: removed user=${id} from channel=${existingChannelId}`);
+          }
+        }
+
         if (!voiceRooms.has(channelId)) {
           voiceRooms.set(channelId, new Set());
         }
-        voiceRooms.get(channelId)!.add(ws.id);
-        ws.subscribe("voice:" + channelId);
         
-        const currentUsersInVoice = Array.from(voiceRooms.get(channelId) || [])
+        // Get existing users BEFORE adding the new one
+        const existingUserIds = Array.from(voiceRooms.get(channelId)!)
             .map(socketId => activeUsers.get(socketId))
             .filter(Boolean) as User[];
 
+        voiceRooms.get(channelId)!.add(ws.id);
+        ws.subscribe("voice:" + channelId);
+        
+        const allUsersInVoice = Array.from(voiceRooms.get(channelId)!)
+            .map(socketId => activeUsers.get(socketId))
+            .filter(Boolean) as User[];
+
+        // Send room state to the joiner
         ws.send({
           type: "VOICE_ROOM_STATE",
-          content: { channelId, users: currentUsersInVoice }
+          content: { channelId, users: allUsersInVoice }
         });
 
+        // Broadcast to everyone that this user joined
         ws.publish("chat", {
           type: "USER_JOINED_VOICE",
           content: { id, username: activeUsers.get(ws.id)?.username, channelId }
         });
+
+        // Send targeted INIT_PEER signals to each existing member
+        // This tells each existing member to create a fresh peer connection to the new joiner
+        for (const existingUser of existingUserIds) {
+          ws.publish("chat", {
+            type: "INIT_PEER",
+            content: { initiatorId: existingUser.id, targetId: id },
+            senderId: "server"
+          });
+        }
       } else if (rawMessage.type === "LEAVE_VOICE") {
         const channelId = rawMessage.channelId || 'lobby';
         console.log(`[Server] LEAVE_VOICE: user=${id}, channelId=${channelId}, roomHas=${voiceRooms.get(channelId)?.has(ws.id)}`);
