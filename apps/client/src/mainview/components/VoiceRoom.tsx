@@ -268,6 +268,9 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
         return pc;
     };
 
+    // Buffer for ICE candidates that arrive before the peer connection is fully negotiated
+    const candidateQueue = useRef<Record<string, RTCIceCandidateInit[]>>({});
+
     useEffect(() => {
         const handleSignals = async () => {
             for (const sig of incomingSignals) {
@@ -292,6 +295,15 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                     // New user joined. Add them and initiate WebRTC.
                     playUserJoin();
                     setRoomUsers(prev => ({ ...prev, [content.id]: { username: content.username, isVideoOff: false, isMuted: false } }));
+                    
+                    // Kill any "ghost" connections if the user abruptly disconnected previously
+                    const ghostPc = peerConnections.current.get(content.id);
+                    if (ghostPc) {
+                        ghostPc.close();
+                        peerConnections.current.delete(content.id);
+                    }
+                    delete candidateQueue.current[content.id];
+                    
                     getOrCreatePeerConnection(content.id, true);
                 } else if (type === "USER_LEFT_VOICE") {
                     playUserLeave();
@@ -324,6 +336,14 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                     answer.sdp = mungeSDP(answer.sdp);
                     await pc.setLocalDescription(answer);
                     onSendSignal("WEBRTC_ANSWER", pc.localDescription, senderId);
+                    
+                    // Drain any queued ICE candidates that arrived early
+                    if (candidateQueue.current[senderId]) {
+                        for (const c of candidateQueue.current[senderId]) {
+                            pc.addIceCandidate(new RTCIceCandidate(c)).catch(console.error);
+                        }
+                        delete candidateQueue.current[senderId];
+                    }
                 } else if (type === "WEBRTC_ANSWER" && targetId === currentUserId) {
                     const pc = peerConnections.current.get(senderId);
                     if (pc) {
@@ -331,12 +351,16 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                     }
                 } else if (type === "WEBRTC_ICE_CANDIDATE" && targetId === currentUserId) {
                     const pc = peerConnections.current.get(senderId);
-                    if (pc) {
+                    if (pc && pc.remoteDescription) {
                         try {
                             await pc.addIceCandidate(new RTCIceCandidate(content));
                         } catch (e) {
                             console.error("Error adding ice candidate:", e);
                         }
+                    } else {
+                        // Queue it until remoteDescription is fully set
+                        if (!candidateQueue.current[senderId]) candidateQueue.current[senderId] = [];
+                        candidateQueue.current[senderId].push(content);
                     }
                 }
             }
