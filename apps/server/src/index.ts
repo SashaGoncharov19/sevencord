@@ -255,9 +255,14 @@ const wsRoutes = new Elysia()
           targetId: targetId
         });
       } else if (rawMessage.type === "MEDIA_STATE_CHANGED") {
-          // Broadcast media toggle (video/mic) state so other users know to show avatar or video
           ws.publish("chat", {
               type: "MEDIA_STATE_CHANGED",
+              content: rawMessage.content,
+              senderId: id
+          });
+      } else if (rawMessage.type === "SCREEN_SHARE_CHANGED") {
+          ws.publish("chat", {
+              type: "SCREEN_SHARE_CHANGED",
               content: rawMessage.content,
               senderId: id
           });

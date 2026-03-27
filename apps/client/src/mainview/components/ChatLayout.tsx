@@ -102,7 +102,7 @@ export default function ChatLayout({ serverUrl, token, onDisconnect }: ChatLayou
 					type: data.type, content: data.content,
 					senderId: "server", targetId: "all", id: crypto.randomUUID()
 				}]);
-			} else if (["WEBRTC_OFFER", "WEBRTC_ANSWER", "WEBRTC_ICE_CANDIDATE", "MEDIA_STATE_CHANGED"].includes(data.type)) {
+			} else if (["WEBRTC_OFFER", "WEBRTC_ANSWER", "WEBRTC_ICE_CANDIDATE", "MEDIA_STATE_CHANGED", "SCREEN_SHARE_CHANGED"].includes(data.type)) {
 				setIncomingSignals(prev => [...prev, {
 					type: data.type,
 					content: data.content,

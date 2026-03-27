@@ -23,6 +23,7 @@ interface RoomUser {
     username: string;
     isVideoOff: boolean;
     isMuted: boolean;
+    isScreenSharing?: boolean;
 }
 
 function RemoteVideo({ 
@@ -85,9 +86,13 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
     const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
     const [roomUsers, setRoomUsers] = useState<Record<string, RoomUser>>({});
     const [pinnedUserId, setPinnedUserId] = useState<string | null>(null);
+    const [isScreenSharing, setIsScreenSharing] = useState(false);
+    const screenStreamRef = useRef<MediaStream | null>(null);
+    const cameraTrackRef = useRef<MediaStreamTrack | null>(null);
     
     const peerConnections = useRef<Map<string, RTCPeerConnection>>(new Map());
     const processedSignals = useRef<Set<string>>(new Set());
+    const candidateQueue = useRef<Record<string, RTCIceCandidateInit[]>>({});
 
     const rtcConfig = {
         iceServers: [
@@ -96,8 +101,31 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
         ]
     };
 
+    // Helper: add local tracks to a PeerConnection + boost bitrate
+    const addTracksToPC = (pc: RTCPeerConnection, stream: MediaStream) => {
+        // Check if we already added tracks (avoid duplicates)
+        const existingSenders = pc.getSenders();
+        if (existingSenders.length > 0) return;
+
+        stream.getTracks().forEach(track => {
+            const sender = pc.addTrack(track, stream);
+            try {
+                const params = sender.getParameters();
+                if (!params.encodings) params.encodings = [{}];
+                if (track.kind === "video") params.encodings[0].maxBitrate = 4000000;
+                else if (track.kind === "audio") params.encodings[0].maxBitrate = 128000;
+                sender.setParameters(params).catch(e => console.warn(e));
+            } catch (e) { }
+        });
+    };
+
+    // Initialize media stream on mount
     useEffect(() => {
         let isMounted = true;
+
+        // Clear stale signal processing from previous mount
+        processedSignals.current.clear();
+        candidateQueue.current = {};
 
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             console.error("navigator.mediaDevices is undefined.");
@@ -115,10 +143,8 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                 echoCancellation: shouldEnableEC,
                 noiseSuppression: shouldEnableNS,
                 autoGainControl: true
-                // Note: Enforcing sampleRate or channelCount here disables Chromium's native AEC/NS!
             };
         } else {
-            // "Studio Mode": Bypass all browser processing for raw stereo quality
             audioConstraints = {
                 echoCancellation: false,
                 noiseSuppression: false,
@@ -162,7 +188,6 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                 localStreamRef.current = stream;
                 setLocalStream(stream);
                 onSendSignal("JOIN_VOICE", { peerId: currentUserId }, undefined);
-                // Immediately broadcast our media state
                 onSendSignal("MEDIA_STATE_CHANGED", { isVideoOff, isMuted }, undefined);
             })
             .catch(e => {
@@ -188,23 +213,134 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [channelId]);
 
+    // CRITICAL FIX: When localStream becomes available, retroactively add tracks
+    // to any PeerConnections that were created while getUserMedia was still pending.
+    // This also re-negotiates the connection so the remote side gets our tracks.
+    useEffect(() => {
+        if (!localStream) return;
+
+        for (const [targetId, pc] of peerConnections.current.entries()) {
+            const senders = pc.getSenders();
+            if (senders.length === 0) {
+                // This PC was created before our stream was ready — inject tracks now
+                addTracksToPC(pc, localStream);
+
+                // Re-negotiate: create a new offer and send it so the remote side
+                // knows we have tracks now
+                pc.createOffer()
+                    .then(offer => {
+                        offer.sdp = mungeSDP(offer.sdp);
+                        return pc.setLocalDescription(offer);
+                    })
+                    .then(() => {
+                        onSendSignal("WEBRTC_OFFER", pc.localDescription, targetId);
+                    })
+                    .catch(e => console.error("Error re-negotiating after stream ready:", e));
+            }
+        }
+    }, [localStream]);
+
     // Handle Mute / Video Toggle Locally and Broadcast
     useEffect(() => {
         if (localStream) {
             localStream.getAudioTracks().forEach(track => {
                 track.enabled = !isMuted;
             });
-            localStream.getVideoTracks().forEach(track => {
-                track.enabled = !isVideoOff;
-            });
+            // Only toggle camera tracks if not screen sharing
+            if (!isScreenSharing) {
+                localStream.getVideoTracks().forEach(track => {
+                    track.enabled = !isVideoOff;
+                });
+            }
             onSendSignal("MEDIA_STATE_CHANGED", { isVideoOff, isMuted }, undefined);
         }
-    }, [isMuted, isVideoOff, localStream, onSendSignal]);
+    }, [isMuted, isVideoOff, localStream, onSendSignal, isScreenSharing]);
+
+    // Screen Share: start or stop
+    const toggleScreenShare = async () => {
+        if (isScreenSharing) {
+            // Stop screen share — revert to camera
+            if (screenStreamRef.current) {
+                screenStreamRef.current.getTracks().forEach(t => t.stop());
+                screenStreamRef.current = null;
+            }
+            const camTrack = cameraTrackRef.current;
+            if (camTrack) {
+                // Replace the screen track back to camera in all PeerConnections
+                for (const pc of peerConnections.current.values()) {
+                    const videoSender = pc.getSenders().find(s => s.track?.kind === 'video' || (s.track === null && cameraTrackRef.current));
+                    if (videoSender) {
+                        await videoSender.replaceTrack(camTrack).catch(console.error);
+                    }
+                }
+                // Also update local stream so our own preview shows camera again
+                if (localStreamRef.current) {
+                    const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
+                    if (oldVideoTrack) localStreamRef.current.removeTrack(oldVideoTrack);
+                    localStreamRef.current.addTrack(camTrack);
+                    setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+                }
+            }
+            setIsScreenSharing(false);
+            onSendSignal("SCREEN_SHARE_CHANGED", { isSharing: false }, undefined);
+            return;
+        }
+
+        try {
+            const screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: { cursor: "always" } as any,
+                audio: false
+            });
+            screenStreamRef.current = screenStream;
+            const screenTrack = screenStream.getVideoTracks()[0];
+
+            // Save the current camera track so we can revert later
+            if (localStreamRef.current) {
+                cameraTrackRef.current = localStreamRef.current.getVideoTracks()[0] || null;
+            }
+
+            // Replace camera track with screen track in all PeerConnections
+            for (const pc of peerConnections.current.values()) {
+                const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
+                if (videoSender) {
+                    await videoSender.replaceTrack(screenTrack).catch(console.error);
+                }
+            }
+
+            // Update local stream preview
+            if (localStreamRef.current) {
+                const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
+                if (oldVideoTrack) localStreamRef.current.removeTrack(oldVideoTrack);
+                localStreamRef.current.addTrack(screenTrack);
+                setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+            }
+
+            setIsScreenSharing(true);
+            onSendSignal("SCREEN_SHARE_CHANGED", { isSharing: true }, undefined);
+
+            // When user clicks the native browser "Stop sharing" button
+            screenTrack.onended = () => {
+                toggleScreenShare();
+            };
+        } catch (e) {
+            console.warn("Screen share cancelled or failed:", e);
+        }
+    };
+
+    // Cleanup screen share on unmount
+    useEffect(() => {
+        return () => {
+            if (screenStreamRef.current) {
+                screenStreamRef.current.getTracks().forEach(t => t.stop());
+                screenStreamRef.current = null;
+            }
+        };
+    }, []);
 
     const mungeSDP = (sdp?: string) => {
         if (!sdp) return sdp;
         return sdp.replace(/(a=fmtp:\d+ .*)/g, (match) => {
-            if (match.includes("apt=")) return match; // Skip RTX/dummy payloads
+            if (match.includes("apt=")) return match;
             return match + ";stereo=1;sprop-stereo=1;maxaveragebitrate=510000;cbr=1";
         });
     };
@@ -217,19 +353,12 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
         const pc = new RTCPeerConnection(rtcConfig);
         peerConnections.current.set(targetId, pc);
 
-        if (localStream) {
-            localStream.getTracks().forEach(track => {
-                const sender = pc.addTrack(track, localStream);
-                // Boost bitrate dynamically for better quality
-                try {
-                    const params = sender.getParameters();
-                    if (!params.encodings) params.encodings = [{}];
-                    if (track.kind === "video") params.encodings[0].maxBitrate = 4000000;
-                    else if (track.kind === "audio") params.encodings[0].maxBitrate = 128000;
-                    sender.setParameters(params).catch(e => console.warn(e));
-                } catch (e) { }
-            });
+        // Use the ref so we get the absolute latest stream, not a stale closure
+        const stream = localStreamRef.current;
+        if (stream) {
+            addTracksToPC(pc, stream);
         }
+        // If stream is null, the useEffect watching localStream will retroactively add tracks
 
         pc.onicecandidate = (event) => {
             if (event.candidate) {
@@ -253,7 +382,9 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
             }
         };
 
-        if (isInitiator) {
+        if (isInitiator && stream) {
+            // Only create an offer if we actually have tracks.
+            // If we don't, the useEffect watching localStream will re-negotiate later.
             pc.createOffer()
                 .then(offer => {
                     offer.sdp = mungeSDP(offer.sdp);
@@ -268,9 +399,6 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
         return pc;
     };
 
-    // Buffer for ICE candidates that arrive before the peer connection is fully negotiated
-    const candidateQueue = useRef<Record<string, RTCIceCandidateInit[]>>({});
-
     useEffect(() => {
         const handleSignals = async () => {
             for (const sig of incomingSignals) {
@@ -284,7 +412,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
 
                 if (type === "VOICE_ROOM_STATE") {
                     const usersArr = content.users as {id: string, username: string}[];
-                    const newRoomUsers = { ...roomUsers };
+                    const newRoomUsers: Record<string, RoomUser> = {};
                     for (const u of usersArr) {
                         if (u.id !== currentUserId) {
                             newRoomUsers[u.id] = { username: u.username, isVideoOff: false, isMuted: false };
@@ -292,11 +420,12 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                     }
                     setRoomUsers(newRoomUsers);
                 } else if (type === "USER_JOINED_VOICE") {
-                    // New user joined. Add them and initiate WebRTC.
+                    if (content.id === currentUserId) continue; // Skip our own join
+
                     playUserJoin();
                     setRoomUsers(prev => ({ ...prev, [content.id]: { username: content.username, isVideoOff: false, isMuted: false } }));
                     
-                    // Kill any "ghost" connections if the user abruptly disconnected previously
+                    // Kill any ghost connections
                     const ghostPc = peerConnections.current.get(content.id);
                     if (ghostPc) {
                         ghostPc.close();
@@ -324,12 +453,32 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                         pc.close();
                         peerConnections.current.delete(content.id);
                     }
+                    delete candidateQueue.current[content.id];
                 } else if (type === "MEDIA_STATE_CHANGED" && senderId) {
                     setRoomUsers(prev => {
                         if (!prev[senderId]) return prev;
                         return { ...prev, [senderId]: { ...prev[senderId], ...content } };
                     });
+                } else if (type === "SCREEN_SHARE_CHANGED" && senderId) {
+                    const sharing = content.isSharing as boolean;
+                    setRoomUsers(prev => {
+                        if (!prev[senderId]) return prev;
+                        return { ...prev, [senderId]: { ...prev[senderId], isScreenSharing: sharing } };
+                    });
+                    // Auto-pin the person who started sharing
+                    if (sharing) {
+                        setPinnedUserId(senderId);
+                    } else if (pinnedUserId === senderId) {
+                        setPinnedUserId(null);
+                    }
                 } else if (type === "WEBRTC_OFFER" && targetId === currentUserId) {
+                    // Destroy any existing PC for this sender to handle re-negotiation cleanly
+                    const existingPc = peerConnections.current.get(senderId);
+                    if (existingPc) {
+                        existingPc.close();
+                        peerConnections.current.delete(senderId);
+                    }
+
                     const pc = getOrCreatePeerConnection(senderId, false);
                     await pc.setRemoteDescription(new RTCSessionDescription(content));
                     const answer = await pc.createAnswer();
@@ -337,7 +486,7 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                     await pc.setLocalDescription(answer);
                     onSendSignal("WEBRTC_ANSWER", pc.localDescription, senderId);
                     
-                    // Drain any queued ICE candidates that arrived early
+                    // Drain any queued ICE candidates
                     if (candidateQueue.current[senderId]) {
                         for (const c of candidateQueue.current[senderId]) {
                             pc.addIceCandidate(new RTCIceCandidate(c)).catch(console.error);
@@ -348,6 +497,13 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                     const pc = peerConnections.current.get(senderId);
                     if (pc) {
                         await pc.setRemoteDescription(new RTCSessionDescription(content));
+                        // Drain any queued ICE candidates
+                        if (candidateQueue.current[senderId]) {
+                            for (const c of candidateQueue.current[senderId]) {
+                                pc.addIceCandidate(new RTCIceCandidate(c)).catch(console.error);
+                            }
+                            delete candidateQueue.current[senderId];
+                        }
                     }
                 } else if (type === "WEBRTC_ICE_CANDIDATE" && targetId === currentUserId) {
                     const pc = peerConnections.current.get(senderId);
@@ -358,7 +514,6 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                             console.error("Error adding ice candidate:", e);
                         }
                     } else {
-                        // Queue it until remoteDescription is fully set
                         if (!candidateQueue.current[senderId]) candidateQueue.current[senderId] = [];
                         candidateQueue.current[senderId].push(content);
                     }
@@ -483,6 +638,16 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
                     )}
                 </button>
 
+                <button 
+                    onClick={toggleScreenShare}
+                    className={`w-12 h-12 flex items-center justify-center rounded-full transition-all ${isScreenSharing ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30 ring-2 ring-green-500/50' : 'bg-gray-700 text-white hover:bg-gray-600'}`}
+                    title={isScreenSharing ? "Stop Sharing" : "Share Screen"}
+                >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                </button>
+
                 <div className="w-[1px] h-8 bg-gray-700 mx-2"></div>
 
                 <button 
@@ -498,3 +663,4 @@ export default function VoiceRoom({ channelId, currentUserId, onSendSignal, inco
         </div>
     );
 }
+
