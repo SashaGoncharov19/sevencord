@@ -27,9 +27,10 @@ const WsQuery = t.Object({
 // from the handler parameters of a throwaway .ws() call.
 const _wsRef = new Elysia()
   .use(jwtPlugin)
-  .ws("/", { body: WsBody, query: WsQuery, open: (ws) => ws });
+  .ws("/ws", { body: WsBody, query: WsQuery });
 
-type AppWs = Parameters<Parameters<typeof _wsRef.ws>[1]["open"] & {}>[0];
+type ExtractedWs = Parameters<Parameters<typeof _wsRef.ws>[1]["open"] & {}>[0];
+type AppWs = Omit<ExtractedWs, "raw" | "body" | "~types">;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
