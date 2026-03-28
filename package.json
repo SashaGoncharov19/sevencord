@@ -8,5 +8,8 @@
   "scripts": {
     "dev:server": "bun run --cwd apps/server dev",
     "dev:client": "bun run --cwd apps/client dev:hmr"
+  },
+  "devDependencies": {
+    "prettier": "^3.8.1"
   }
 }
