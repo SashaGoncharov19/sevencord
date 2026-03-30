@@ -4,7 +4,7 @@ export default {
   app: {
     name: "7cord",
     identifier: "sevencord.entityseven.com",
-    version: "1.4.1",
+    version: "1.4.2",
   },
   build: {
     targets: "win-x64,macos-arm64",
